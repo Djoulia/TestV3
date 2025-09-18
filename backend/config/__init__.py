@@ -1,0 +1,1 @@
+"""Configuration package for Investment Screening System"""
