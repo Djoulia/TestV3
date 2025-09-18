@@ -6,7 +6,7 @@ Main orchestration of the investment screening process
 import json
 import logging
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from config.settings import LIGHTON_API_KEY, LIGHTON_BASE_URL, MAX_DOCUMENTS_PER_BATCH
 from clients.paradigm_client import ParadigmClient
@@ -16,7 +16,7 @@ from utils.helpers import (
 )
 
 # Import all evaluators from consolidated evaluator module
-from evaluator import (
+from investment_screening.evaluator import (
     evaluate_geography_structure,
     evaluate_financial_milestones,
     evaluate_asset_class_exclusion,
@@ -33,16 +33,18 @@ logger = logging.getLogger(__name__)
 # Initialize client
 paradigm_client = ParadigmClient(LIGHTON_API_KEY, LIGHTON_BASE_URL)
 
-async def execute_workflow(user_input: str) -> str:
+async def execute_workflow(user_input: str, attached_file_ids: Optional[List[int]] = None) -> str:
     """Execute the complete investment screening workflow"""
     
     # STEP 1: Receive and identify the investment opportunity document
-    attached_file_ids = globals().get('attached_file_ids', [])
-    
     if not attached_file_ids:
-        return "Error: No investment opportunity document provided. Please attach the document to analyze."
+        # Fallback to globals for backward compatibility (for main.py usage)
+        attached_file_ids = globals().get('attached_file_ids', [])
+        
+    if not attached_file_ids:
+        return "Error: No investment opportunity document provided. Please provide document IDs to analyze."
     
-    logger.info(f"Processing {len(attached_file_ids)} attached files")
+    logger.info(f"Processing {len(attached_file_ids)} attached files: {attached_file_ids}")
     
     # STEP 2: Search for and retrieve the investment opportunity document
     try:
@@ -50,7 +52,7 @@ async def execute_workflow(user_input: str) -> str:
         documents = search_result.get("documents", [])
         
         if not documents:
-            return "Error: Could not retrieve the investment opportunity document."
+            return "Error: Could not retrieve the investment opportunity document. Please check document IDs."
         
         document_ids = [str(doc["id"]) for doc in documents]
         logger.info(f"Found {len(document_ids)} documents for analysis")

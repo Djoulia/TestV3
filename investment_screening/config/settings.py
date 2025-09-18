@@ -3,10 +3,15 @@ Configuration settings for the Investment Screening System
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # API Configuration
 LIGHTON_API_KEY = os.getenv("LIGHTON_API_KEY", "your_api_key_here")
 LIGHTON_BASE_URL = os.getenv("LIGHTON_BASE_URL", "https://api.lighton.ai")
+
 
 # Workflow Configuration
 MAX_WAIT_TIME = 300  # 5 minutes for polling
