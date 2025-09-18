@@ -1,15 +1,168 @@
 import React, { useState } from 'react';
-import { Upload, Play, FileText, Zap, CheckCircle, Loader } from 'lucide-react';
+import { Upload, Play, FileText, Zap, CheckCircle, Loader, X } from 'lucide-react';
 
 export default function ParadigmScreeningInterface() {
   const [documents, setDocuments] = useState([]);
+  const [uploadedDocumentIds, setUploadedDocumentIds] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [output, setOutput] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState('');
+  const [logs, setLogs] = useState([]);
+
+  // API Configuration
+  const API_BASE = '/api';
+
+  // Utility function for logging
+  const addLog = (message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs(prev => [...prev, { timestamp, message, type }]);
+    console.log(`[${timestamp}] ${message}`);
+  };
+
+  // Logged fetch wrapper for API calls
+  const loggedFetch = async (url, options = {}, description = '') => {
+    try {
+      addLog(`🌐 ${description}: ${options.method || 'GET'} ${url}`, 'info');
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer YOUR_API_KEY_HERE`,
+          ...options.headers
+        }
+      });
+      
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (e) {
+        data = await response.text();
+      }
+      
+      return { response, data };
+    } catch (error) {
+      addLog(`❌ Network error: ${error.message}`, 'error');
+      throw error;
+    }
+  };
+
+  // Upload files to backend and attach them to queries
+  const uploadQueryFiles = async (files) => {
+    const fileArray = Array.from(files).slice(0, 2 - documents.length);
+    
+    for (const file of fileArray) {
+      try {
+        setUploadStatus(`Uploading ${file.name}...`);
+        addLog(`📤 Uploading query attachment: ${file.name} (${file.size} bytes)`, 'info');
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('collection_type', 'private');
+        
+        const { response, data } = await loggedFetch(`${API_BASE}/files/upload`, {
+          method: 'POST',
+          body: formData
+        }, `UPLOAD QUERY FILE: ${file.name}`);
+        
+        if (response.ok) {
+          // Add to documents list with server data
+          const documentData = {
+            file,
+            id: data.id,
+            filename: data.filename,
+            bytes: data.bytes,
+            status: data.status
+          };
+          
+          setDocuments(prev => [...prev, documentData]);
+          setUploadedDocumentIds(prev => [...prev, data.id]);
+          
+          setUploadStatus(`✅ ${file.name} attached to query!`);
+          addLog(`✅ Query file uploaded successfully: ID ${data.id}`, 'response');
+          
+        } else {
+          setUploadStatus(`❌ Failed to upload ${file.name}`);
+          addLog(`❌ Query upload failed: ${data.detail || 'Unknown error'}`, 'error');
+        }
+        
+      } catch (error) {
+        setUploadStatus(`❌ Network error uploading ${file.name}`);
+        addLog(`❌ Query upload network error: ${error.message}`, 'error');
+      }
+    }
+  };
+
+  // Remove a file attachment from the current query
+  const removeQueryFile = async (documentId, index) => {
+    if (!window.confirm('Are you sure you want to remove this attachment?')) return;
+    
+    try {
+      addLog(`🗑️ Removing query attachment ID: ${documentId}`, 'info');
+      
+      const { response, data } = await loggedFetch(`${API_BASE}/files/${documentId}`, {
+        method: 'DELETE'
+      }, `DELETE QUERY FILE: ${documentId}`);
+      
+      if (response.ok) {
+        // Remove from documents array
+        setDocuments(prev => prev.filter((_, i) => i !== index));
+        setUploadedDocumentIds(prev => prev.filter(id => id !== documentId));
+        
+        addLog(`✅ Query attachment removed: ID ${documentId}`, 'response');
+        setUploadStatus('File removed successfully');
+        
+      } else {
+        addLog(`❌ Remove attachment error: ${data.detail}`, 'error');
+        setUploadStatus(`❌ Failed to remove file`);
+      }
+      
+    } catch (error) {
+      addLog(`❌ Remove attachment network error: ${error.message}`, 'error');
+      setUploadStatus(`❌ Network error removing file`);
+    }
+  };
+
+  // Cleanup uploaded documents after workflow testing
+  const cleanupUploadedDocuments = async (documentIds) => {
+    if (!documentIds || documentIds.length === 0) {
+      return;
+    }
+    
+    addLog(`🧹 Starting automatic cleanup of ${documentIds.length} test document(s)...`, 'info');
+    
+    let cleanupSuccessCount = 0;
+    let cleanupFailCount = 0;
+    
+    for (const documentId of documentIds) {
+      try {
+        const { response } = await loggedFetch(`${API_BASE}/files/${documentId}`, {
+          method: 'DELETE'
+        }, `CLEANUP TEST DOCUMENT: ${documentId}`);
+        
+        if (response.ok || response.status === 404) {
+          cleanupSuccessCount++;
+          addLog(`🗑️ Test document ${documentId} deleted successfully`, 'response');
+        } else {
+          cleanupFailCount++;
+          addLog(`⚠️ Failed to delete test document ${documentId} (status: ${response.status})`, 'error');
+        }
+      } catch (error) {
+        cleanupFailCount++;
+        addLog(`⚠️ Error deleting test document ${documentId}: ${error.message}`, 'error');
+      }
+    }
+    
+    if (cleanupSuccessCount > 0) {
+      addLog(`✅ Cleanup completed: ${cleanupSuccessCount} document(s) deleted from Paradigm`, 'response');
+    }
+    
+    if (cleanupFailCount > 0) {
+      addLog(`⚠️ Cleanup issues: ${cleanupFailCount} document(s) could not be deleted`, 'error');
+    }
+  };
 
   const handleFileUpload = (files) => {
-    const newFiles = Array.from(files).slice(0, 2 - documents.length);
-    setDocuments(prev => [...prev, ...newFiles]);
+    uploadQueryFiles(files);
   };
 
   const handleDragOver = (e) => {
@@ -29,7 +182,13 @@ export default function ParadigmScreeningInterface() {
   };
 
   const removeDocument = (index) => {
-    setDocuments(prev => prev.filter((_, i) => i !== index));
+    const document = documents[index];
+    if (document.id) {
+      removeQueryFile(document.id, index);
+    } else {
+      // For files not yet uploaded, just remove from local state
+      setDocuments(prev => prev.filter((_, i) => i !== index));
+    }
   };
 
   const launchWorkflow = async () => {
@@ -40,29 +199,37 @@ export default function ParadigmScreeningInterface() {
 
     setIsProcessing(true);
     setOutput('');
+    addLog('🚀 Starting workflow processing...', 'info');
 
     try {
       const formData = new FormData();
       documents.forEach((doc, index) => {
-        formData.append(`document${index + 1}`, doc);
+        formData.append(`document${index + 1}`, doc.file);
       });
 
-      const response = await fetch('/api/process-documents', {
+      const { response, data } = await loggedFetch(`${API_BASE}/process-documents`, {
         method: 'POST',
-        body: formData,
-        headers: {
-          'Authorization': `Bearer ${process.env.PARADIGM_API_KEY}`
-        }
-      });
+        body: formData
+      }, 'PROCESS DOCUMENTS');
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (response.ok) {
+        setOutput(typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+        addLog('✅ Workflow completed successfully', 'response');
+        
+        // Auto-cleanup uploaded documents after successful processing
+        if (uploadedDocumentIds.length > 0) {
+          setTimeout(() => {
+            cleanupUploadedDocuments(uploadedDocumentIds);
+          }, 2000); // Wait 2 seconds before cleanup
+        }
+      } else {
+        throw new Error(`HTTP error! status: ${response.status} - ${data.detail || 'Unknown error'}`);
       }
 
-      const result = await response.text();
-      setOutput(result);
     } catch (error) {
-      setOutput(`Error processing documents: ${error.message}`);
+      const errorMessage = `Error processing documents: ${error.message}`;
+      setOutput(errorMessage);
+      addLog(`❌ ${errorMessage}`, 'error');
     } finally {
       setIsProcessing(false);
     }
@@ -85,7 +252,7 @@ export default function ParadigmScreeningInterface() {
               <span className="text-xs font-medium text-gray-700">LightOn Logo</span>
             </div>
             
-            <h1 className="text-4xl md:text-6xl font-bold bg-gradient-to-r from-blue-600 via-blue-500 to-blue-700 bg-clip-text text-transparent">
+            <h1 className="text-4xl md:text-6xl font-bold text-black">
               Paradigm Screening Use Case
             </h1>
             
@@ -166,6 +333,18 @@ export default function ParadigmScreeningInterface() {
             )}
           </div>
 
+          {/* Upload Status */}
+          {uploadStatus && (
+            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className={`text-sm font-medium ${
+                uploadStatus.includes('❌') ? 'text-red-600' : 
+                uploadStatus.includes('✅') ? 'text-green-600' : 'text-blue-600'
+              }`}>
+                {uploadStatus}
+              </p>
+            </div>
+          )}
+
           {/* Uploaded Files Display */}
           {documents.length > 0 && (
             <div className="mt-6 space-y-3">
@@ -173,14 +352,22 @@ export default function ParadigmScreeningInterface() {
                 <div key={index} className="flex items-center justify-between bg-white/90 backdrop-blur-sm rounded-lg p-4 border border-gray-200 shadow-sm">
                   <div className="flex items-center gap-3">
                     <FileText className="text-blue-600" size={20} />
-                    <span className="font-medium text-gray-800">{doc.name}</span>
-                    <span className="text-sm text-gray-500">({(doc.size / 1024 / 1024).toFixed(2)} MB)</span>
+                    <div>
+                      <div className="font-medium text-gray-800">{doc.filename || doc.file?.name}</div>
+                      <div className="text-sm text-gray-500">
+                        {doc.bytes ? `${(doc.bytes / 1024 / 1024).toFixed(2)} MB` : 
+                         doc.file ? `${(doc.file.size / 1024 / 1024).toFixed(2)} MB` : 'Unknown size'}
+                        {doc.id && ` • ID: ${doc.id}`}
+                        {doc.status && ` • Status: ${doc.status}`}
+                      </div>
+                    </div>
                   </div>
                   <button
                     onClick={() => removeDocument(index)}
-                    className="px-3 py-1 text-red-600 hover:text-red-500 transition-colors font-medium"
+                    className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all duration-200"
+                    title="Remove attachment"
                   >
-                    Remove
+                    <X size={18} />
                   </button>
                 </div>
               ))}
@@ -228,7 +415,7 @@ export default function ParadigmScreeningInterface() {
         )}
 
         {/* Output Section */}
-        <div className="bg-white/90 backdrop-blur-lg rounded-2xl p-6 border border-gray-200 shadow-xl">
+        <div className="bg-white/90 backdrop-blur-lg rounded-2xl p-6 border border-gray-200 shadow-xl mb-8">
           <h3 className="text-xl font-semibold mb-4 flex items-center gap-3 text-gray-800">
             <FileText className="text-blue-500" size={24} />
             Analysis Results
@@ -241,6 +428,27 @@ export default function ParadigmScreeningInterface() {
             )}
           </div>
         </div>
+
+        {/* Activity Logs */}
+        {logs.length > 0 && (
+          <div className="bg-white/90 backdrop-blur-lg rounded-2xl p-6 border border-gray-200 shadow-xl">
+            <h3 className="text-xl font-semibold mb-4 flex items-center gap-3 text-gray-800">
+              <FileText className="text-blue-500" size={24} />
+              Activity Logs
+            </h3>
+            <div className="bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto">
+              {logs.slice(-10).map((log, index) => (
+                <div key={index} className={`text-sm mb-2 ${
+                  log.type === 'error' ? 'text-red-400' :
+                  log.type === 'response' ? 'text-green-400' :
+                  'text-gray-300'
+                }`}>
+                  <span className="text-gray-500 text-xs">[{log.timestamp}]</span> {log.message}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
